@@ -1,36 +1,35 @@
 import numpy as np
-from operator import xor
 from scipy.optimize import *
 
 
 def sigmoid(x):
+    x = np.clip(x, -500, 500)
     return 1 / (1 + np.exp(-x))
 
 
 def sigmoid_derivation(x):
-    return x * (1.0 + np.exp(-x))
+    x = np.clip(x, -500, 500)
+    return np.multiply(x, (1.0 - x))
 
 
 class NeuralNetwork:
     """
     Třívrstvý vícevrsvý perceptron
     """
-    def __init__(self, layer1_size, layer2_size, layer3_size):
-        self.l1 = np.random.randn(layer1_size, layer2_size) * (0.12 * 2) - 0.12
-        self.l2 = np.random.randn(layer2_size, layer1_size) * (0.12 * 2) - 0.12
-        self.l3 = np.random.randn(layer3_size, layer2_size) * (0.12 * 2) - 0.12
+    def __init__(self, input_size, hidden_layer_size, output_size):
+        self.hidden_layer = np.random.randn(input_size, hidden_layer_size)
+        self.output_layer = np.random.randn(hidden_layer_size, output_size)
+        self.number_of_outputs = output_size
+        self.j = []
 
     def reshape(self, x):
-        l1_size = self.l1.shape[0] * self.l1.shape[1]
-        l2_size = self.l2.shape[0] * self.l2.shape[1]
-        l3_size = self.l3.shape[0] * self.l3.shape[1]
+        l1_size = self.hidden_layer.shape[0] * self.hidden_layer.shape[1]
+        l2_size = self.output_layer.shape[0] * self.output_layer.shape[1]
         l1 = x[0:l1_size]
         l2 = x[l1_size:(l1_size + l2_size)]
-        l3 = x[(l1_size + l2_size):]
-        l1 = l1.reshape(self.l1.shape)
-        l2 = l2.reshape(self.l2.shape)
-        l3 = l3.reshape(self.l3.shape)
-        return l1, l2, l3
+        l1 = l1.reshape(self.hidden_layer.shape)
+        l2 = l2.reshape(self.output_layer.shape)
+        return l1, l2
 
     def feed_forward(self, input_data):
         """
@@ -38,85 +37,105 @@ class NeuralNetwork:
         :param input_data:  vstupní data o velikosti
         :return: predikce
         """
-        a1 = input_data
-        z1 = self.l1.dot(a1)
+        a1 = input_data.transpose()
+        z1 = np.dot(a1, self.hidden_layer)
         a2 = sigmoid(z1)
-        z2 = self.l2.dot(a2)
+        z2 = np.dot(a2, self.output_layer)
         a3 = sigmoid(z2)
-        z4 = self.l3.dot(a3)
-        a4 = sigmoid(z4)
-        return np.argmax(a4) + 1
+        return np.argmax(a3)
 
     def cost_fn_for_minimalization(self, x, *args):
-        l1, l2, l3 = self.reshape(x)
+        l1, l2 = self.reshape(x)
         learning_rate, input_data = args
-        return self.cost_fn(l1, l2, l3, learning_rate, input_data)["cost"]
+        cost =  self.cost_fn(l1, l2, learning_rate, input_data)["cost"]
+        self.j.append(cost)
+        return cost
 
     def gradients_for_minimalization(self, x, *args):
-        l1, l2, l3 = self.reshape(x)
+        l1, l2 = self.reshape(x)
         learning_rate, input_data = args
-        return self.cost_fn(l1, l2, l3, learning_rate, input_data)["gradients"]
+        return self.cost_fn(l1, l2, learning_rate, input_data)["gradients"]
 
-    def cost_fn(self, l1, l2, l3, learning_rate, input_data):
-        result = 0
+    def cost_fn(self, l1, l2, learning_rate, input_data):
+        J = 0
         m = len(input_data)
         l1_delta = 0
         l2_delta = 0
-        l3_delta = 0
         for i in range(m):
-            for k in range(l3.shape[0]):
-                # Feed forward algoritmus
-                # první vrstva
-                a1 = input_data[i]["input"]
-                z1 = l1.dot(a1)
-                # druhá vrstva
-                a2 = sigmoid(z1)
-                z2 = l2.dot(a2)
-                # Třetí vrstva
-                a3 = sigmoid(z2)
-                z3 = l3.dot(a3)
-                a4 = sigmoid(z3)
-                # Predikce
-                prediction = np.matrix([a4]).transpose() # h(x_i)
-                y = input_data[i]["output"]
-                result += (-y * np.log(prediction) - np.dot((1 - y), np.log(1 - prediction)))[0, 0]
-                prediction = a4
-                # chyba výstupu vrstvy
-                delta4 = prediction - y
-                delta3 = np.dot(l3.transpose(), delta4) * sigmoid_derivation(z3)
-                delta2 = np.dot(l2.transpose(), delta3) * sigmoid_derivation(z2)
-                l3_delta += np.dot(delta4, a3.transpose())
-                l2_delta += np.dot(delta3, a2.transpose())
-                l1_delta += np.dot(delta2, a1.transpose())
+            # Feed forward algoritmus
+            # první vrstva
+            a1 = input_data[i]["input"]
+            z1 = np.dot(a1, l1)
+            a2 = sigmoid(z1)
+            z2 = np.dot(a2, l2)
+            a3 = sigmoid(z2)
+            y = np.matrix([int(x) for x in np.arange(self.number_of_outputs) == input_data[i]["output"]])
+            prediction = a3.T
+            J += np.dot(y, np.log(prediction)) - np.dot((1 - y), np.log(1 - prediction))
+            # Výpočet gradientů
+            delta3 = prediction.T - y
+            delta2_part = np.dot(delta3, l2.T)
+            delta2 = np.multiply(delta2_part, sigmoid_derivation(z1))
+            l1_delta += np.dot(a1.T, delta2)
+            l2_delta += np.dot(a2.T, delta3)
+
         # Cost funkce bez regularizace
-        result *= -(1/m)
+        J *= -(1/m)
 
         # Regularizace
-        regularization = sum(sum(l1 ** 2)) + sum(sum(l2 ** 2)) + sum(sum(l3 ** 2))
+        regularization = sum(sum(l1 ** 2)) + sum(sum(l2 ** 2))
         regularization = (learning_rate / (2 * m)) * regularization
-        result = result + regularization
-        l1_delta += (learning_rate / m) * l1
-        l2_delta += (learning_rate / m) * l2
-        l3_delta += (learning_rate / m) * l3
+        J += regularization
+        l1_delta = l1_delta * (learning_rate / m)
+        l2_delta = l2_delta * (learning_rate / m)
+        l1_delta = np.squeeze(np.asarray(l1_delta.flatten()))
+        l2_delta = np.squeeze(np.asarray(l2_delta.flatten()))
+        J = J[0, 0]
         return {
-            "cost": result,
-            "gradients": np.append(np.append(l1_delta.flatten(),
-                                             l2_delta.flatten()), l3_delta.flatten())
+            "cost": J,
+            "gradients": np.append(l1_delta.flatten(),
+                                   l2_delta.flatten())
         }
 
-    def train(self, input_data, learning_rate, epochs):
-        theta = np.append(np.append(self.l1.flatten(), self.l2.flatten()), self.l3.flatten())
+    def train(self, input_data, learning_rate):
+        import matplotlib.pyplot as plt
+        theta = np.append(self.hidden_layer.flatten(), self.output_layer.flatten())
         result = fmin_ncg(f=self.cost_fn_for_minimalization, fprime=self.gradients_for_minimalization, x0=theta,
-                         args=(learning_rate, input_data), maxiter=epochs, full_output=True)
-        self.l1, self.l2, self.l3 = self.reshape(result[0])
+                         args=(learning_rate, input_data), full_output=True)
+        self.hidden_layer, self.output_layer = self.reshape(result[0])
+        plt.plot(self.j)
+        plt.xlabel("iterace")
+        plt.ylabel("$J(\\theta)$")
+        plt.show()
 
+
+def unpickle(file):
+    import _pickle as cPickle
+    fo = open(file, 'rb')
+    dict = cPickle.load(fo, encoding='iso-8859-1')
+    fo.close()
+    return dict
+
+import random
 if __name__ == '__main__':
-    neural_net = NeuralNetwork(2, 2, 2)
-    data = [np.array([x, y]).transpose() for x in range(0, 2) for y in range(0, 2)]
-    input_data = [{
-        "input": x,
-        "output": np.array([0, 1]) if xor(x[0], x[1]) else np.array([1, 0])
-    } for x in data]
-    neural_net.train(input_data, 1, 400)
-    for data_point in data:
-        print("nn(%s) = %s" % (data_point, neural_net.feed_forward(data_point)))
+    neural_net = NeuralNetwork(32 * 32 * 3, 25, 10)
+
+    training_set = unpickle("cifar-10-batches-py/data_batch_1")
+    input_data = []
+    for i in range(int(len(training_set["labels"]) * 0.1)):
+        input_data.append({
+            "input": np.matrix(training_set["data"][i]),
+            "output": training_set["labels"][i]
+        })
+
+    neural_net.train(input_data, 0.00001)
+    correctly_classified = 0
+    classified = 0
+    for i in range(int(len(input_data) * 0.3)):
+        classified += 1
+        indx = random.randint(0, len(training_set["labels"]))
+        cmp = training_set["labels"][indx] == neural_net.feed_forward(training_set["data"][indx])
+        if cmp:
+            correctly_classified += 1
+
+    print("Úspěšnost %s " % str((correctly_classified / classified) * 100))
